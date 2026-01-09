@@ -7,12 +7,12 @@ import requests
 import polyline
 import math
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="PharmaGuard | National Command Center", page_icon="❄️")
 
-# --- CUSTOM CSS FOR FULL-SCREEN LOADING ---
+# --- CUSTOM CSS FOR LOADING SCREEN & UI FIXES ---
 st.markdown("""
     <style>
     #loading-overlay {
@@ -30,6 +30,9 @@ st.markdown("""
         100% { transform: scale(1); opacity: 0.7; }
     }
     .loading-text { font-size: 24px; font-weight: 300; letter-spacing: 5px; font-family: sans-serif; }
+    
+    /* Fix for metric labels to ensure they don't wrap weirdly */
+    [data-testid="stMetricValue"] { font-size: 1.8rem !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -78,15 +81,15 @@ WAREHOUSE_NETWORK = [
 ]
 
 PHARMA_HUBS = {
-    "Baddi Hub": [30.9578, 76.7914], "Sikkim Cluster": [27.3314, 88.6138],
-    "Ahmedabad (W)": [23.0225, 72.5714], "Hyderabad (S)": [17.4500, 78.6000],
-    "Vizag City": [17.6868, 83.2185], "Goa Manufacturing": [15.2993, 74.1240],
+    "Baddi Hub (North)": [30.9578, 76.7914], "Sikkim Cluster (East)": [27.3314, 88.6138],
+    "Ahmedabad (West)": [23.0225, 72.5714], "Hyderabad (South)": [17.4500, 78.6000],
+    "Vizag Pharma City": [17.6868, 83.2185], "Goa Manufacturing": [15.2993, 74.1240],
     "Indore SEZ": [22.7196, 75.8577], "Pune Bio-Cluster": [18.5204, 73.8567]
 }
 
 DESTINATIONS = {
-    "Mumbai Port": [18.9438, 72.8387], "Delhi Cargo": [28.5562, 77.1000],
-    "Bangalore Dist": [12.9716, 77.5946], "Chennai Term": [13.0827, 80.2707],
+    "Mumbai Port": [18.9438, 72.8387], "Delhi Air Cargo": [28.5562, 77.1000],
+    "Bangalore Dist.": [12.9716, 77.5946], "Chennai Terminal": [13.0827, 80.2707],
     "Kolkata Port": [22.5726, 88.3639], "Guwahati Hub": [26.1445, 91.7362]
 }
 
@@ -116,7 +119,7 @@ def generate_forecast(is_failing=False):
         data.append(round(val, 2))
     return data
 
-# --- EVERY-REFRESH LOADING ANIMATION ---
+# --- LOADING ANIMATION ---
 loading_placeholder = st.empty()
 with loading_placeholder:
     st.markdown("""
@@ -126,12 +129,11 @@ with loading_placeholder:
         </div>
         """, unsafe_allow_html=True)
 
-# Data Initialization Logic
+# Data Initialization
 if 'fleet' not in st.session_state:
     fleet = []
     h_keys, d_keys = list(PHARMA_HUBS.keys()), list(DESTINATIONS.keys())
-    # Adjusted driver names to match screenshot request
-    drivers = ["N. Modi", "A. Shah", "R. Gandhi", "M. Salim", "Pritam Singh", "R. Deshmukh", "Gurdeep Paaji", "Vijay Mallya", "S. Tharoor", "N. Chandran", "Arjun Kapur", "Deepak Punia", "Suresh Raina", "M. S. Dhoni", "Hardik Pandya"]
+    drivers = ["N. Modi", "A. Shah", "S. Jaishankar", "R. Gandhi", "M. Salim", "Pritam Singh", "R. Deshmukh", "Gurdeep Paaji", "Vijay Mallya", "S. Tharoor", "N. Chandran", "Arjun Kapur", "Deepak Punia", "Suresh Raina", "M. S. Dhoni"]
     for i in range(15):
         o, d = h_keys[i % len(h_keys)], d_keys[i % len(d_keys)]
         path, dist = get_road_route(PHARMA_HUBS[o], DESTINATIONS[d])
@@ -147,7 +149,7 @@ if 'fleet' not in st.session_state:
         })
     st.session_state.fleet = fleet
 else:
-    time.sleep(1.2)
+    time.sleep(0.8)
 
 loading_placeholder.empty()
 
@@ -177,34 +179,46 @@ with tab1:
     
     st_folium(m, width="100%", height=550, key="main_map")
 
+    # SYSTEMATIC INTELLIGENCE DASHBOARD
     st.markdown(f"### 📊 Systematic Intelligence: {selected_id}")
+    
     n_hub = min(WAREHOUSE_NETWORK, key=lambda x: haversine(selected_truck['pos'][0], selected_truck['pos'][1], x['lat'], x['lon']))
     n_dist = round(haversine(selected_truck['pos'][0], selected_truck['pos'][1], n_hub['lat'], n_hub['lon']))
     is_critical = selected_truck['temp'] > 5 or selected_truck['temp'] < -10
     
-    # STATUS BAR
+    # MISSION STATUS BAR
     if is_critical:
         st.error(f"🛑 **MISSION STATUS: REROUTE TO NEAREST HUB** | Temp Breach ({selected_truck['temp']}°C). Reroute: **{n_hub['name']}**")
     else:
         st.success(f"✅ **MISSION STATUS: CONTINUE / SAFE** | Environment Nominal.")
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Driver", selected_truck['driver'])
-    col1.metric("Live Temp", f"{selected_truck['temp']}°C", delta="SAFE" if not is_critical else "FAIL", delta_color="normal")
-    col2.metric("Covered", f"{selected_truck['dist_covered']} km")
-    col2.metric("Remaining", f"{selected_truck['dist_rem']} km")
-    col3.metric("Time", f"{selected_truck['hrs_driven']} hrs")
-    # FIX: REMOVED [:8] SLICING TO SHOW FULL ROUTE NAMES
-    col3.metric("Route", f"{selected_truck['origin']} ➔ {selected_truck['dest']}")
-    
-    with col4:
+    # CALCULATING ETA (Assuming 60 km/h avg truck speed)
+    eta_hours = selected_truck['dist_rem'] / 60
+    eta_time = (datetime.now() + timedelta(hours=eta_hours)).strftime("%H:%M, %d %b")
+
+    # ROW 1: PRIMARY METRICS
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Driver Profile", selected_truck['driver'])
+    m2.metric("Live Temp", f"{selected_truck['temp']}°C", delta="CRITICAL" if is_critical else "SAFE", delta_color="inverse")
+    m3.metric("Current Driving Time", f"{selected_truck['hrs_driven']} hrs")
+    m4.metric("Est. Time of Arrival", eta_time)
+
+    # ROW 2: DISTANCE BREAKDOWN
+    d1, d2, d3, d4 = st.columns(4)
+    d1.metric("Distance Covered", f"{selected_truck['dist_covered']} km")
+    d2.metric("Distance Remaining", f"{selected_truck['dist_rem']} km")
+    d3.metric("Total Route Distance", f"{selected_truck['total_km']} km")
+    with d4:
         st.markdown(f"""
-        <div style="background-color:#1e2130; padding:12px; border-radius:8px; border-left: 5px solid {'#ff4b4b' if is_critical else '#3498db'};">
-            <p style="margin:0; font-size:0.8rem; color:#9ea0a9; text-transform:uppercase;">📍 Rescue Target</p>
+        <div style="background-color:#1e2130; padding:12px; border-radius:8px; border-left: 5px solid {'#ff4b4b' if is_critical else '#00FFFF'};">
+            <p style="margin:0; font-size:0.8rem; color:#9ea0a9; text-transform:uppercase;">📍 Nearest Rescue</p>
             <p style="margin:0; font-size:1rem; font-weight:bold; color:#ffffff;">{n_hub['name']}</p>
-            <p style="margin:0; font-size:0.85rem; color:{'#ff4b4b' if is_critical else '#3498db'};">Dev: {n_dist} km</p>
+            <p style="margin:0; font-size:0.85rem; color:{'#ff4b4b' if is_critical else '#00FFFF'};">Deviation: {n_dist} km</p>
         </div>
         """, unsafe_allow_html=True)
+
+    # ROW 3: FULL ROUTE (FIX FOR VISIBILITY)
+    st.info(f"🛣️ **Active Logistics Corridor:** {selected_truck['origin']} ———▶ {selected_truck['dest']}")
 
 with tab2:
     st.subheader("Sub-Zero Thermal Profile (-10°C to 5°C)")
@@ -222,8 +236,19 @@ with tab2:
 with tab3:
     st.header("Strategic Route Safety Audit")
     p1, p2, p3 = st.columns([1,1,1])
-    start_n = p1.selectbox("Start Point", list(PHARMA_HUBS.keys()))
+    start_n = p1.selectbox("Departure", list(PHARMA_HUBS.keys()))
     end_n = p2.selectbox("Destination", list(DESTINATIONS.keys()))
     radius = p3.slider("Rescue Buffer (km)", 20, 150, 60)
     if st.button("Generate Road Safety Audit"):
-        p
+        path, d = get_road_route(PHARMA_HUBS[start_n], DESTINATIONS[end_n])
+        st.success(f"Verified Distance: {d} km")
+        pm = folium.Map(location=PHARMA_HUBS[start_n], zoom_start=6, tiles="CartoDB dark_matter")
+        folium.PolyLine(path, color="#00FFFF", weight=4).add_to(pm)
+        found = []
+        for wh in WAREHOUSE_NETWORK:
+            dist = min([haversine(wh['lat'], wh['lon'], pt[0], pt[1]) for pt in path[::20]])
+            if dist <= radius:
+                folium.Marker([wh['lat'], wh['lon']], icon=folium.Icon(color="orange", icon="shield-heart", prefix="fa"), popup=wh['name']).add_to(pm)
+                found.append({"Hub": wh['name'], "Deviation (km)": round(dist, 1)})
+        st_folium(pm, width="100%", height=450, key="plan_map")
+        if found: st.table(pd.DataFrame(found).sort_values("Deviation (km)"))
