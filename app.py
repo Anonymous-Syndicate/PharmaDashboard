@@ -11,7 +11,7 @@ from datetime import datetime
 # --- CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="PharmaGuard | National Command Center", page_icon="❄️")
 
-# --- DATASETS ---
+# --- STRATEGIC HUB DATASETS ---
 PHARMA_HUBS = {
     "Baddi Hub (North)": [30.9578, 76.7914], "Sikkim Cluster (East)": [27.3314, 88.6138],
     "Ahmedabad (West)": [23.0225, 72.5714], "Hyderabad (South)": [17.4500, 78.6000],
@@ -27,140 +27,31 @@ DESTINATIONS = {
     "Nagpur Hub": [21.1458, 79.0882], "Lucknow Logistics": [26.8467, 80.9462]
 }
 
-# (Abbreviated Rescue Hubs list for performance - total 80 nodes)
+# --- 80 REAL INDIAN CITIES FOR RESCUE HUBS ---
 WAREHOUSE_NETWORK = [
-    {"name": "Leh-Vault", "lat": 34.1526, "lon": 77.5771}, {"name": "Srinagar-Cold", "lat": 34.0837, "lon": 74.7973},
-    {"name": "Jaipur-Safe", "lat": 26.9124, "lon": 75.7873}, {"name": "Bhopal-Bio", "lat": 23.2599, "lon": 77.4126},
-    {"name": "Guwahati-Apex", "lat": 26.1445, "lon": 91.7362}, {"name": "Kochi-South", "lat": 9.9312, "lon": 76.2673},
-    {"name": "Lucknow-Safe", "lat": 26.8467, "lon": 80.9462}, {"name": "Nagpur-Central", "lat": 21.1458, "lon": 79.0882}
-]
-# Generate additional mock hubs to fill 80 for visual density
-for i in range(72):
-    WAREHOUSE_NETWORK.append({
-        "name": f"Rescue-Node-{100+i}",
-        "lat": random.uniform(8.5, 34.0),
-        "lon": random.uniform(68.5, 95.0)
-    })
-
-DRIVERS = ["Amitav Ghosh", "S. Jaishankar", "K. Rathore", "Mohd. Salim", "Pritam Singh", "R. Deshmukh", "Gurdeep Paaji", "Vijay Mallya", "S. Tharoor", "N. Chandran", "Arjun Kapur", "Deepak Punia", "Suresh Raina", "M. S. Dhoni", "Hardik Pandya"]
-
-# --- FUNCTIONS ---
-def get_road_route(start, end):
-    url = f"http://router.project-osrm.org/route/v1/driving/{start[1]},{start[0]};{end[1]},{end[0]}?overview=full"
-    try:
-        r = requests.get(url, timeout=3).json()
-        return polyline.decode(r['routes'][0]['geometry']), round(r['routes'][0]['distance']/1000)
-    except: 
-        return [start, end], 500 # Fallback
-
-def haversine(lat1, lon1, lat2, lon2):
-    R = 6371
-    dlat, dlon = math.radians(lat2-lat1), math.radians(lon2-lon1)
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
-# --- INITIALIZE FLEET ---
-if 'fleet' not in st.session_state:
-    with st.spinner("Initializing National Command Center..."):
-        fleet = []
-        hub_names = list(PHARMA_HUBS.keys())
-        dest_names = list(DESTINATIONS.keys())
-        for i in range(15):
-            o, d = hub_names[i % len(hub_names)], dest_names[i % len(dest_names)]
-            path, dist = get_road_route(PHARMA_HUBS[o], DESTINATIONS[d])
-            prog = random.uniform(0.3, 0.7)
-            pos = path[int(len(path)*prog)]
-            
-            fleet.append({
-                "id": f"IND-EXP-{1000+i}", "driver": DRIVERS[i],
-                "origin": o, "dest": d, "pos": pos, "path": path,
-                "total_km": dist, "dist_covered": round(dist * prog),
-                "dist_rem": round(dist * (1-prog)), "hrs_driven": round(prog * 12, 1),
-                "temp": round(random.uniform(-8, 2), 1),
-                "forecast": [round(random.uniform(-8, 20), 1) for _ in range(8)]
-            })
-        st.session_state.fleet = fleet
-
-# --- UI LAYOUT ---
-st.title("❄️ PharmaGuard National Command Center")
-
-tab1, tab2, tab3 = st.tabs(["🌐 Live Map", "🌡️ Thermal Forecasts", "🛤️ Trip Planner"])
-
-with tab1:
-    # Highlighting Logic
-    truck_ids = [t['id'] for t in st.session_state.fleet]
-    selected_id = st.selectbox("🎯 Select Truck for Live Intelligence:", truck_ids)
-    selected_truck = next(t for t in st.session_state.fleet if t['id'] == selected_id)
-
-    # MAP
-    m = folium.Map(location=[22, 78], zoom_start=5, tiles="CartoDB dark_matter")
-    
-    # Render Hubs
-    for wh in WAREHOUSE_NETWORK:
-        folium.CircleMarker([wh['lat'], wh['lon']], radius=2, color="#3498db", fill=True).add_to(m)
-
-    # Render Trucks
-    for t in st.session_state.fleet:
-        is_sel = t['id'] == selected_id
-        color = "#00FFFF" if is_sel else ("red" if t['temp'] > 0 else "green")
-        folium.PolyLine(t['path'], color=color, weight=5 if is_sel else 1, opacity=0.8 if is_sel else 0.2).add_to(m)
-        folium.Marker(t['pos'], icon=folium.Icon(color="purple" if is_sel else color, icon="truck", prefix="fa")).add_to(m)
-    
-    st_folium(m, width="100%", height=500, key="main_map")
-
-    # SYSTEMATIC INTELLIGENCE
-    st.markdown(f"### 📊 Systematic Intelligence: {selected_id}")
-    col1, col2, col3, col4 = st.columns(4)
-    
-    # Nearest Hub Calculation
-    n_hub = min(WAREHOUSE_NETWORK, key=lambda x: haversine(selected_truck['pos'][0], selected_truck['pos'][1], x['lat'], x['lon']))
-    n_dist = round(haversine(selected_truck['pos'][0], selected_truck['pos'][1], n_hub['lat'], n_hub['lon']))
-
-    col1.metric("Driver", selected_truck['driver'])
-    col1.metric("Current Temp", f"{selected_truck['temp']}°C")
-    
-    col2.metric("Distance Covered", f"{selected_truck['dist_covered']} km")
-    col2.metric("Distance Remaining", f"{selected_truck['dist_rem']} km")
-    
-    col3.metric("Time Driven", f"{selected_truck['hrs_driven']} hrs")
-    col3.metric("Route", f"{selected_truck['origin'][:10]}...")
-
-    col4.subheader("Nearest Rescue Hub")
-    col4.info(f"**{n_hub['name']}**\n\nDistance: {n_dist} km")
-
-with tab2:
-    st.subheader("Thermal Forecasts (-10°C to Ambient)")
-    f_cols = st.columns(3)
-    for i, t in enumerate(st.session_state.fleet):
-        with f_cols[i % 3]:
-            st.write(f"**Truck {t['id']}**")
-            st.line_chart(t['forecast'])
-
-with tab3:
-    st.header("Strategic Route Planner")
-    p1, p2 = st.columns(2)
-    start = p1.selectbox("Start Node", list(PHARMA_HUBS.keys()))
-    end = p2.selectbox("End Node", list(DESTINATIONS.keys()))
-    
-    if st.button("Plan Trip"):
-        route_path, route_dist = get_road_route(PHARMA_HUBS[start], DESTINATIONS[end])
-        st.success(f"Estimated Distance: {route_dist} km")
-        
-        pm = folium.Map(location=PHARMA_HUBS[start], zoom_start=6, tiles="CartoDB dark_matter")
-        folium.PolyLine(route_path, color="cyan", weight=4).add_to(pm)
-        
-        # Show nearby hubs
-        found = 0
-        for wh in WAREHOUSE_NETWORK:
-            d = min([haversine(wh['lat'], wh['lon'], p[0], p[1]) for p in route_path[::20]])
-            if d < 60:
-                folium.Marker([wh['lat'], wh['lon']], icon=folium.Icon(color="orange", icon="shield-heart", prefix="fa")).add_to(pm)
-                found += 1
-        
-        st_folium(pm, width="100%", height=400, key="planner_map")
-        st.write(f"Rescue Hubs along route: {found}")
-
-with st.sidebar:
-    st.image("https://cdn-icons-png.flaticon.com/512/2862/2862410.png", width=80)
-    st.title("PharmaGuard AI")
-    st.write(f"System Time: {datetime.now().strftime('%H:%M')}")
+    {"name": "Delhi-Vault", "lat": 28.61, "lon": 77.21}, {"name": "Mumbai-Apex", "lat": 19.08, "lon": 72.88},
+    {"name": "Bangalore-Chill", "lat": 12.98, "lon": 77.59}, {"name": "Chennai-Hub", "lat": 13.08, "lon": 80.27},
+    {"name": "Kolkata-Safe", "lat": 22.57, "lon": 88.36}, {"name": "Hyderabad-Vault", "lat": 17.39, "lon": 78.49},
+    {"name": "Ahmedabad-Bio", "lat": 23.02, "lon": 72.57}, {"name": "Pune-Rescue", "lat": 18.52, "lon": 73.86},
+    {"name": "Lucknow-Safe", "lat": 26.85, "lon": 80.95}, {"name": "Nagpur-Central", "lat": 21.15, "lon": 79.09},
+    {"name": "Jaipur-Vault", "lat": 26.91, "lon": 75.79}, {"name": "Kanpur-Apex", "lat": 26.45, "lon": 80.33},
+    {"name": "Surat-Safe", "lat": 21.17, "lon": 72.83}, {"name": "Patna-Cold", "lat": 25.59, "lon": 85.14},
+    {"name": "Vadodara-Chill", "lat": 22.31, "lon": 73.18}, {"name": "Ludhiana-Hub", "lat": 30.90, "lon": 75.86},
+    {"name": "Agra-Vault", "lat": 27.18, "lon": 78.01}, {"name": "Nashik-Apex", "lat": 20.00, "lon": 73.79},
+    {"name": "Ranchi-Safe", "lat": 23.34, "lon": 85.31}, {"name": "Raipur-Rescue", "lat": 21.25, "lon": 81.63},
+    {"name": "Guwahati-Vault", "lat": 26.14, "lon": 91.74}, {"name": "Chandigarh-Safe", "lat": 30.73, "lon": 76.78},
+    {"name": "Bhubaneswar-Apex", "lat": 20.30, "lon": 85.82}, {"name": "Coimbatore-Chill", "lat": 11.02, "lon": 76.96},
+    {"name": "Vijayawada-Hub", "lat": 16.51, "lon": 80.65}, {"name": "Madurai-Safe", "lat": 9.93, "lon": 78.12},
+    {"name": "Jodhpur-Vault", "lat": 26.24, "lon": 73.02}, {"name": "Kochi-Bio", "lat": 9.93, "lon": 76.27},
+    {"name": "Dehradun-Rescue", "lat": 30.32, "lon": 78.03}, {"name": "Ambala-Cold", "lat": 30.38, "lon": 76.78},
+    {"name": "Gorakhpur-Apex", "lat": 26.76, "lon": 83.37}, {"name": "Amritsar-Safe", "lat": 31.63, "lon": 74.87},
+    {"name": "Jammu-Vault", "lat": 32.73, "lon": 74.86}, {"name": "Srinagar-Safe", "lat": 34.08, "lon": 74.80},
+    {"name": "Shillong-Apex", "lat": 25.58, "lon": 91.89}, {"name": "Gangtok-Bio", "lat": 27.33, "lon": 88.61},
+    {"name": "Imphal-Rescue", "lat": 24.82, "lon": 93.94}, {"name": "Itanagar-Safe", "lat": 27.08, "lon": 93.61},
+    {"name": "Panaji-Vault", "lat": 15.49, "lon": 73.83}, {"name": "Mysore-Chill", "lat": 12.30, "lon": 76.64},
+    {"name": "Tirupati-Hub", "lat": 13.63, "lon": 79.42}, {"name": "Pondicherry-Safe", "lat": 11.94, "lon": 79.81},
+    {"name": "Salem-Apex", "lat": 11.66, "lon": 78.15}, {"name": "Udaipur-Vault", "lat": 24.59, "lon": 73.71},
+    {"name": "Bikaner-Cold", "lat": 28.02, "lon": 73.31}, {"name": "Ajmer-Safe", "lat": 26.45, "lon": 74.64},
+    {"name": "Bhuj-Vault", "lat": 23.24, "lon": 69.67}, {"name": "Rajkot-Apex", "lat": 22.30, "lon": 70.80},
+    {"name": "Varanasi-Chill", "lat": 25.32, "lon": 82.97}, {"name": "Jamshedpur-Safe", "lat": 22.80, "lon": 86.20},
+    {"name": "Bhopal-Hub", "lat": 23.26, "lon": 77.41}, {"name": "Indore-Vault"
