@@ -10,7 +10,7 @@ import math
 # --- CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="PharmaGuard | National Command Center", page_icon="❄️")
 
-# --- EXPANDED NATIONAL DATASETS ---
+# --- DATASETS ---
 PHARMA_HUBS = {
     "Baddi Hub (North)": [30.9578, 76.7914],
     "Sikkim Cluster (East)": [27.3314, 88.6138],
@@ -30,7 +30,6 @@ DESTINATIONS = {
     "Nagpur Hub": [21.1458, 79.0882], "Lucknow Logistics": [26.8467, 80.9462]
 }
 
-# --- MASSIVELY EXPANDED WAREHOUSE NETWORK (50+ NODES) ---
 WAREHOUSE_NETWORK = [
     {"name": "Ambala-01", "lat": 30.3782, "lon": 76.7767}, {"name": "Jaipur-Safe", "lat": 26.9124, "lon": 75.7873},
     {"name": "Udaipur-Vault", "lat": 24.5854, "lon": 73.7125}, {"name": "Gwalior-Cold", "lat": 26.2183, "lon": 78.1828},
@@ -61,13 +60,18 @@ WAREHOUSE_NETWORK = [
 
 DRIVERS = ["Amitav Ghosh", "S. Jaishankar", "K. Rathore", "Mohd. Salim", "Pritam Singh", "R. Deshmukh", "Gurdeep Paaji", "Vijay Mallya", "S. Tharoor", "N. Chandran", "Arjun Kapur", "Deepak Punia", "Suresh Raina", "M. S. Dhoni", "Hardik Pandya"]
 
-# --- FUNCTIONS ---
-def get_road_route(start, end):
+# --- HELPER FUNCTIONS ---
+def get_road_route_data(start, end):
+    """Returns (path, distance_km, duration_hrs) from OSRM."""
     url = f"http://router.project-osrm.org/route/v1/driving/{start[1]},{start[0]};{end[1]},{end[0]}?overview=full"
     try:
         r = requests.get(url, timeout=5).json()
-        return polyline.decode(r['routes'][0]['geometry'])
-    except: return [start, end]
+        path = polyline.decode(r['routes'][0]['geometry'])
+        dist = round(r['routes'][0]['distance'] / 1000, 1)
+        dur = round(r['routes'][0]['duration'] / 3600, 1)
+        return path, dist, dur
+    except:
+        return [start, end], 0, 0
 
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371
@@ -75,122 +79,131 @@ def haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-def find_warehouses_along_route(path_coords, radius_km):
-    nearby = []
-    sampled_path = path_coords[::10] # Efficiency
-    for wh in WAREHOUSE_NETWORK:
-        min_dist = float('inf')
-        for point in sampled_path:
-            dist = haversine(wh['lat'], wh['lon'], point[0], point[1])
-            if dist < min_dist: min_dist = dist
-        if min_dist <= radius_km:
-            nearby.append({**wh, "deviation_km": round(min_dist, 1)})
-    return nearby
+def generate_realistic_forecast():
+    """Generates temp that decreases gradually and stays constant (plateaus)."""
+    temps = []
+    curr = random.uniform(1.0, 4.0)
+    for i in range(8):
+        if i in [3, 4, 5]: # Simulate plateau/constant temp
+            change = random.uniform(-0.1, 0.1)
+        else: # Simulate cooling
+            change = random.uniform(-0.8, -0.2)
+        curr = max(-10.0, min(5.0, curr + change))
+        temps.append(round(curr, 1))
+    return temps
 
-# --- SESSION STATE INITIALIZATION ---
+# --- INITIALIZE SESSION ---
 if 'fleet' not in st.session_state:
     fleet = []
     hub_list, dest_list = list(PHARMA_HUBS.keys()), list(DESTINATIONS.keys())
     for i in range(15):
         origin, dest = hub_list[i % len(hub_list)], dest_list[i % len(dest_list)]
-        path = get_road_route(PHARMA_HUBS[origin], DESTINATIONS[dest])
+        path, total_km, total_hrs = get_road_route_data(PHARMA_HUBS[origin], DESTINATIONS[dest])
         pos_idx = int(len(path) * random.uniform(0.2, 0.8))
-        truck_pos = path[pos_idx]
-        
-        # Recalibrated logic for -10C to 5C
-        cargo_temp = round(random.uniform(-9.0, 4.5), 1)
-        forecast = [round(random.uniform(-9.8, 4.8), 1) for _ in range(8)]
-        
-        backups = sorted([ {**wh, "dist": round(haversine(truck_pos[0], truck_pos[1], wh['lat'], wh['lon']))} for wh in WAREHOUSE_NETWORK ], key=lambda x: x['dist'])[:12]
-        
         fleet.append({
-            "id": f"IND-EXP-{1000+i}", "driver": DRIVERS[i], "hours": round(random.uniform(1, 14), 1),
-            "origin": origin, "dest": dest, "pos": truck_pos, "path": path,
-            "cargo_temp": cargo_temp, "backups": backups, "forecast": forecast
+            "id": f"IND-EXP-{1000+i}", "driver": DRIVERS[i], "hours_driven": round(random.uniform(1, 9), 1),
+            "total_hrs": total_hrs, "total_km": total_km, "origin": origin, "dest": dest,
+            "pos": path[pos_idx], "path": path, "cargo_temp": round(random.uniform(-8, 3), 1),
+            "forecast": generate_realistic_forecast()
         })
     st.session_state.fleet = fleet
 
-# --- UI STYLING ---
-st.markdown("<style>.main { background-color: #0e1117; }</style>", unsafe_allow_html=True)
-
-# --- HEADER ---
+# --- UI ---
 st.title("❄️ PharmaGuard National Command Center")
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-# Alerts: Logic updated to flag if temp goes above 5C or below -10C
-thermal_alerts = len([t for t in st.session_state.fleet if t['cargo_temp'] > 5 or t['cargo_temp'] < -10])
 
-with kpi1: st.metric("Active Fleet", "15 Trucks")
-with kpi2: st.metric("Thermal Excursions", thermal_alerts, delta="Ultra-Cold Chain", delta_color="inverse")
-with kpi3: st.metric("Rescue Network", f"{len(WAREHOUSE_NETWORK)} Hubs")
-with kpi4: st.metric("Safety Standard", "-10°C to 5°C")
-
-# --- MAIN TABS ---
-tab1, tab2, tab3, tab4 = st.tabs(["🌐 National Fleet Map", "🌡️ -10°C to 5°C Forecasting", "📋 Fleet Manifest", "🛤️ Trip Safety Planner"])
+tab1, tab2, tab3, tab4 = st.tabs(["🌐 National Fleet Map", "🌡️ Realistic Thermal Forecast", "📋 Manifest", "🛤️ Trip Safety Planner"])
 
 with tab1:
+    col_map, col_details = st.columns([3, 1])
+    
+    # Selection moved above for better interaction
+    selected_truck_id = st.selectbox("Select Truck to Inspect:", [t['id'] for t in st.session_state.fleet])
+    selected_truck = next(t for t in st.session_state.fleet if t['id'] == selected_truck_id)
+
     m = folium.Map(location=[22, 78], zoom_start=5, tiles="CartoDB dark_matter")
+    
+    # 1. Plot ALL Rescue Hubs (Small blue markers)
+    for wh in WAREHOUSE_NETWORK:
+        folium.CircleMarker(
+            [wh['lat'], wh['lon']], radius=3, color="#3498db", fill=True, 
+            popup=f"Rescue Hub: {wh['name']}", opacity=0.6
+        ).add_to(m)
+
+    # 2. Plot Active Fleet
     for t in st.session_state.fleet:
-        # Update alert color logic for new range
-        route_color = "#e74c3c" if (t['cargo_temp'] > 5 or t['cargo_temp'] < -10 or t['hours'] > 9) else "#2ecc71"
-        folium.PolyLine(t['path'], color=route_color, weight=2, opacity=0.4).add_to(m)
-        folium.Marker(t['pos'], icon=folium.Icon(color="red" if route_color == "#e74c3c" else "green", icon="truck", prefix="fa")).add_to(m)
-    st_folium(m, width="100%", height=600, key="main_map")
+        is_selected = t['id'] == selected_truck_id
+        color = "red" if (t['cargo_temp'] > 5 or t['cargo_temp'] < -10) else "green"
+        
+        # Path
+        folium.PolyLine(t['path'], color=color, weight=4 if is_selected else 2, opacity=0.8 if is_selected else 0.3).add_to(m)
+        
+        # Truck Marker
+        folium.Marker(
+            t['pos'], 
+            icon=folium.Icon(color=color, icon="truck", prefix="fa"),
+            tooltip=f"ID: {t['id']}"
+        ).add_to(m)
+
+    st_folium(m, width="100%", height=550, key="main_map")
+
+    # SECTION BELOW MAP: Detailed Section
+    st.divider()
+    st.subheader(f"🚚 Detailed Intelligence: {selected_truck['id']}")
+    d1, d2, d3, d4 = st.columns(4)
+    with d1:
+        st.write(f"**Driver:** {selected_truck['driver']}")
+        st.write(f"**Origin:** {selected_truck['origin']}")
+    with d2:
+        st.write(f"**Status:** {'🚨 ALERT' if selected_truck['cargo_temp'] > 5 else '✅ NORMAL'}")
+        st.write(f"**Destination:** {selected_truck['dest']}")
+    with d3:
+        st.metric("Current Temp", f"{selected_truck['cargo_temp']}°C")
+    with d4:
+        st.metric("Route Distance", f"{selected_truck['total_km']} km")
 
 with tab2:
-    st.subheader("Sub-Zero Predictive Analysis (8hr Window)")
-    st.caption("Standard Range: -10°C (Min) to 5°C (Max)")
+    st.subheader("Sub-Zero Cooling Simulation (-10°C to 5°C)")
+    st.info("Simulation reflects gradual refrigeration cooling and compressor maintenance plateaus.")
     f_cols = st.columns(3)
     for i, t in enumerate(st.session_state.fleet):
         with f_cols[i % 3]:
             st.markdown(f"**Truck {t['id']}**")
-            # Create a dataframe for the line chart to show the target range
-            chart_data = pd.DataFrame({
-                "Forecasted Temp": t['forecast'],
-                "Upper Limit (5°C)": [5.0] * 8,
-                "Lower Limit (-10°C)": [-10.0] * 8
-            })
-            st.line_chart(chart_data)
+            chart_df = pd.DataFrame({"Temp": t['forecast'], "Limit": [5.0]*8, "Floor": [-10.0]*8})
+            st.line_chart(chart_df)
 
 with tab3:
-    st.subheader("Compliance Manifest")
-    log_data = []
-    for t in st.session_state.fleet:
-        status = "✅ STABLE"
-        if t['cargo_temp'] > 5: status = "🚨 OVERHEAT"
-        if t['cargo_temp'] < -10: status = "🚨 CRITICAL COLD"
-        if t['hours'] > 9: status = "⚠️ FATIGUE"
-        
-        log_data.append({
-            "Truck ID": t['id'], "Driver": t['driver'], "Current Temp": f"{t['cargo_temp']}°C",
-            "Route": f"{t['origin']} ➔ {t['dest']}", "Status": status
-        })
-    st.table(pd.DataFrame(log_data))
+    st.table(pd.DataFrame(st.session_state.fleet)[["id", "driver", "origin", "dest", "total_km", "cargo_temp"]])
 
 with tab4:
-    st.header("Pre-Trip Route Safety Audit")
+    st.header("Actual Road-Distance Safety Audit")
     c1, c2, c3 = st.columns([1, 1, 1])
-    with c1: ori = st.selectbox("Origin Hub:", list(PHARMA_HUBS.keys()))
-    with c2: des = st.selectbox("Destination:", list(DESTINATIONS.keys()))
-    with c3: rad = st.slider("Rescue Buffer (km):", 10, 150, 60)
+    with c1: ori_name = st.selectbox("From:", list(PHARMA_HUBS.keys()))
+    with c2: des_name = st.selectbox("To:", list(DESTINATIONS.keys()))
+    with c3: buf = st.slider("Search Buffer (km):", 10, 150, 50)
 
-    if st.button("Generate Audit"):
-        path = get_road_route(PHARMA_HUBS[ori], DESTINATIONS[des])
-        rescuers = find_warehouses_along_route(path, rad)
+    if st.button("Run Audit"):
+        path, road_dist, road_time = get_road_route_data(PHARMA_HUBS[ori_name], DESTINATIONS[des_name])
         
-        col_m, col_t = st.columns([2, 1])
-        with col_m:
-            pm = folium.Map(location=PHARMA_HUBS[ori], zoom_start=6, tiles="CartoDB dark_matter")
-            folium.PolyLine(path, color="#3498db", weight=4).add_to(pm)
-            for r in rescuers:
-                folium.Marker([r['lat'], r['lon']], icon=folium.Icon(color="orange", icon="shield-heart", prefix="fa"), 
-                              popup=f"{r['name']} ({r['deviation_km']}km)").add_to(pm)
-            st_folium(pm, width="100%", height=500, key="plan_map")
-        with col_t:
-            st.metric("Rescue Hubs Found", len(rescuers))
-            st.dataframe(pd.DataFrame(rescuers)[['name', 'deviation_km']].rename(columns={"name": "Hub", "deviation_km": "Dist (km)"}), hide_index=True)
+        # Find hubs near route
+        nearby = []
+        for wh in WAREHOUSE_NETWORK:
+            # Check proximity to path points
+            min_d = min([haversine(wh['lat'], wh['lon'], p[0], p[1]) for p in path[::10]])
+            if min_d <= buf: nearby.append({**wh, "off_road": round(min_d, 1)})
 
-# --- SIDEBAR ---
+        st.success(f"Route Found: **{road_dist} km** via National Highways (~{road_time} hrs)")
+        
+        m2 = folium.Map(location=PHARMA_HUBS[ori_name], zoom_start=6, tiles="CartoDB dark_matter")
+        folium.PolyLine(path, color="#3498db", weight=5).add_to(m2)
+        for n in nearby:
+            folium.Marker([n['lat'], n['lon']], icon=folium.Icon(color="orange", icon="shield-heart", prefix="fa"),
+                          popup=f"{n['name']} (Deviation: {n['off_road']}km)").add_to(m2)
+        
+        st_folium(m2, width="100%", height=500, key="trip_map")
+        st.write(f"**Found {len(nearby)} Rescue Hubs** within {buf}km of the highway.")
+        st.dataframe(pd.DataFrame(nearby)[['name', 'off_road']].rename(columns={"name":"Hub","off_road":"Deviation (km)"}))
+
 with st.sidebar:
     st.image("https://cdn-icons-png.flaticon.com/512/2862/2862410.png", width=80)
     st.title("PharmaGuard AI")
-    st.info("Operating in Ultra-Cold Mode (-10°C to 5°C)")
+    st.caption("Standard: Ultra-Cold Biologics")
