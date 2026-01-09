@@ -89,7 +89,7 @@ DESTINATIONS = {
     "Kolkata Port": [22.5726, 88.3639], "Guwahati Hub": [26.1445, 91.7362]
 }
 
-# --- HELPER FUNCTIONS ---
+# --- FUNCTIONS ---
 @st.cache_data(ttl=3600)
 def get_road_route(start, end):
     url = f"http://router.project-osrm.org/route/v1/driving/{start[1]},{start[0]};{end[1]},{end[0]}?overview=full"
@@ -103,6 +103,23 @@ def haversine(lat1, lon1, lat2, lon2):
     dlat, dlon = math.radians(lat2-lat1), math.radians(lon2-lon1)
     a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+def generate_forecast(is_failing=False):
+    """Generates temperature data with stable zones and minute spikes."""
+    data = []
+    base_temp = 8.5 if is_failing else -4.0
+    for i in range(12):
+        # Base stability noise
+        noise = random.uniform(-0.3, 0.3)
+        # Occasional minute spike (15% chance)
+        spike = random.uniform(1.0, 2.5) if random.random() < 0.15 else 0
+        
+        val = base_temp + noise + spike
+        # Limit the fail truck to show the breach clearly
+        if not is_failing:
+            val = max(-9.5, min(4.5, val))
+        data.append(round(val, 2))
+    return data
 
 # --- INITIALIZATION ---
 if 'fleet' not in st.session_state:
@@ -120,15 +137,15 @@ if 'fleet' not in st.session_state:
         prog = random.uniform(0.3, 0.7)
         pos = path[int(len(path)*prog)]
         
-        # Force a failure for Truck 1005
-        cargo_temp = 8.5 if i == 5 else round(random.uniform(-9, 4), 1)
+        is_fail = (i == 5) # IND-EXP-1005
+        forecast_data = generate_forecast(is_failing=is_fail)
 
         fleet.append({
             "id": f"IND-EXP-{1000+i}", "driver": drivers[i % len(drivers)],
             "origin": o_key, "dest": d_key, "pos": pos, "path": path,
             "total_km": dist, "dist_covered": round(dist * prog), "dist_rem": round(dist * (1-prog)),
-            "hrs_driven": round(prog * 12, 1), "temp": cargo_temp,
-            "forecast": [round(random.uniform(-11, 8), 1) for _ in range(10)]
+            "hrs_driven": round(prog * 12, 1), "temp": forecast_data[0],
+            "forecast": forecast_data
         })
     st.session_state.fleet = fleet
     loading_placeholder.empty()
@@ -164,9 +181,9 @@ with tab1:
     is_critical = selected_truck['temp'] > 5 or selected_truck['temp'] < -10
     
     if is_critical:
-        st.error(f"🛑 **MISSION STATUS: REROUTE TO NEAREST HUB** | Cargo: {selected_truck['temp']}°C | Target: **{n_hub['name']}**")
+        st.error(f"🛑 **MISSION STATUS: REROUTE TO NEAREST HUB** | Cargo Breach ({selected_truck['temp']}°C). Proceed to: **{n_hub['name']}**")
     else:
-        st.success(f"✅ **MISSION STATUS: CONTINUE / SAFE**")
+        st.success(f"✅ **MISSION STATUS: CONTINUE / SAFE** | Environment Nominal.")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Driver", selected_truck['driver'])
@@ -175,29 +192,27 @@ with tab1:
     c2.metric("Remaining", f"{selected_truck['dist_rem']} km")
     c3.metric("Time", f"{selected_truck['hrs_driven']} hrs")
     c3.metric("Route", f"{selected_truck['origin'][:8]} ➔ {selected_truck['dest'][:8]}")
-    c4.info(f"📍 **Emergency Hub:** {n_hub['name']}\n\n**Dist:** {n_dist} km")
+    c4.info(f"📍 **Rescue Target:** {n_hub['name']}\n\n**Dev:** {n_dist} km")
 
 with tab2:
-    st.subheader("Sub-Zero Forecasts with Safety Thresholds (-10°C to 5°C)")
+    st.subheader("Simulated Thermal Profile (-10°C to 5°C)")
     f_cols = st.columns(3)
     for i, t in enumerate(st.session_state.fleet):
         with f_cols[i % 3]:
-            # Create a DataFrame with Forecast and Limit lines
             df_chart = pd.DataFrame({
                 "Temperature": t['forecast'],
-                "Upper Limit (5°C)": [5.0] * len(t['forecast']),
-                "Lower Limit (-10°C)": [-10.0] * len(t['forecast'])
+                "Upper Limit": [5.0] * len(t['forecast']),
+                "Lower Limit": [-10.0] * len(t['forecast'])
             })
             st.write(f"**Truck {t['id']}** ({'🚨 ALERT' if (t['temp'] > 5 or t['temp'] < -10) else '✅ OK'})")
             st.line_chart(df_chart, height=180)
 
 with tab3:
-    st.header("Strategic Route Planner")
+    st.header("Strategic Route Safety Audit")
     p1, p2, p3 = st.columns([1,1,1])
     start_n = p1.selectbox("Start Point", list(PHARMA_HUBS.keys()))
     end_n = p2.selectbox("Destination", list(DESTINATIONS.keys()))
-    radius = p3.slider("Search Radius (km)", 20, 150, 60)
-    
+    radius = p3.slider("Rescue Buffer (km)", 20, 150, 60)
     if st.button("Generate Road Safety Audit"):
         path, d = get_road_route(PHARMA_HUBS[start_n], DESTINATIONS[end_n])
         st.success(f"Verified Distance: {d} km")
