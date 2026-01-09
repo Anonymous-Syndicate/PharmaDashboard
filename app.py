@@ -22,19 +22,13 @@ st.markdown("""
         justify-content: center; align-items: center;
         z-index: 9999; color: white;
     }
-    .loader {
-        font-size: 120px;
-        animation: pulse 2s infinite;
-        margin-bottom: 25px;
-    }
+    .loader { font-size: 120px; animation: pulse 2s infinite; margin-bottom: 25px; }
     @keyframes pulse {
         0% { transform: scale(1); opacity: 0.7; }
         50% { transform: scale(1.2); opacity: 1; color: #00FFFF; }
         100% { transform: scale(1); opacity: 0.7; }
     }
-    .loading-text {
-        font-size: 28px; font-weight: 300; letter-spacing: 4px;
-    }
+    .loading-text { font-size: 28px; font-weight: 300; letter-spacing: 4px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -72,7 +66,7 @@ WAREHOUSE_NETWORK = [
     {"name": "Siliguri-Hub", "lat": 26.73, "lon": 88.40}, {"name": "Asansol-Safe", "lat": 23.67, "lon": 86.95},
     {"name": "Dhanbad-Vault", "lat": 23.80, "lon": 86.43}, {"name": "Rourkela-Apex", "lat": 22.26, "lon": 84.85},
     {"name": "Guntur-Cold", "lat": 16.31, "lon": 80.44}, {"name": "Nellore-Safe", "lat": 14.44, "lon": 79.99},
-    {"name": "Kurnool-Vault", "lat": 15.83, "lon": 78.04}, {"name": "Warangal-Hub", "lat": 17.97, "lon": 79.59},
+    {"name": "Kurnool-Vault", "lat": 15.83, "lon": 78.04}, {"name": "Warangal-Hub", "lat": 17.96, "lon": 79.59},
     {"name": "Gaya-Apex", "lat": 24.79, "lon": 85.00}, {"name": "Bhagalpur-Safe", "lat": 25.24, "lon": 86.97},
     {"name": "Bhavnagar-Vault", "lat": 21.76, "lon": 72.15}, {"name": "Jamnagar-Safe", "lat": 22.47, "lon": 70.06},
     {"name": "Bareilly-Hub", "lat": 28.37, "lon": 79.43}, {"name": "Aligarh-Safe", "lat": 27.88, "lon": 78.08},
@@ -82,7 +76,6 @@ WAREHOUSE_NETWORK = [
     {"name": "Hubli-Safe", "lat": 15.36, "lon": 75.12}, {"name": "Trivandrum-Bio", "lat": 8.52, "lon": 76.94}
 ]
 
-# --- HUB DATASETS ---
 PHARMA_HUBS = {
     "Baddi Hub (North)": [30.9578, 76.7914], "Sikkim Cluster (East)": [27.3314, 88.6138],
     "Ahmedabad (West)": [23.0225, 72.5714], "Hyderabad (South)": [17.4500, 78.6000],
@@ -111,11 +104,11 @@ def haversine(lat1, lon1, lat2, lon2):
     a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
-# --- INITIALIZATION WITH LARGE LOADING SCREEN ---
+# --- INITIALIZATION ---
 if 'fleet' not in st.session_state:
     loading_placeholder = st.empty()
     with loading_placeholder:
-        st.markdown('<div id="loading-overlay"><div class="loader">❄️</div><div class="loading-text">CONNECTING COMMAND CENTER...</div></div>', unsafe_allow_html=True)
+        st.markdown('<div id="loading-overlay"><div class="loader">❄️</div><div class="loading-text">COMMAND CENTER ONLINE...</div></div>', unsafe_allow_html=True)
     
     fleet = []
     hub_names, dest_names = list(PHARMA_HUBS.keys()), list(DESTINATIONS.keys())
@@ -126,12 +119,19 @@ if 'fleet' not in st.session_state:
         path, dist = get_road_route(PHARMA_HUBS[o], DESTINATIONS[d])
         prog = random.uniform(0.3, 0.7)
         pos = path[int(len(path)*prog)]
+        
+        # FORCING TRUCK 1005 TO HAVE THERMAL EXCURSION
+        if i == 5:
+            cargo_temp = 8.2  # Critical Failure (Out of -10 to 5 range)
+        else:
+            cargo_temp = round(random.uniform(-9, 4), 1)
+
         fleet.append({
             "id": f"IND-EXP-{1000+i}", "driver": drivers[i % len(drivers)],
             "origin": o, "dest": d, "pos": pos, "path": path,
             "total_km": dist, "dist_covered": round(dist * prog), "dist_rem": round(dist * (1-prog)),
-            "hrs_driven": round(prog * 12, 1), "temp": round(random.uniform(-9, 4), 1),
-            "forecast": [round(random.uniform(-9, 4), 1) for _ in range(8)]
+            "hrs_driven": round(prog * 12, 1), "temp": cargo_temp,
+            "forecast": [round(random.uniform(-9, 12), 1) for _ in range(8)]
         })
     st.session_state.fleet = fleet
     loading_placeholder.empty()
@@ -145,50 +145,58 @@ with tab1:
     selected_truck = next(t for t in st.session_state.fleet if t['id'] == selected_id)
 
     m = folium.Map(location=[22, 78], zoom_start=5, tiles="CartoDB dark_matter")
-    
-    # Render All Hubs
     for wh in WAREHOUSE_NETWORK:
         folium.CircleMarker([wh['lat'], wh['lon']], radius=3, color="#3498db", fill=True, popup=wh['name']).add_to(m)
 
-    # Render Fleet
     for t in st.session_state.fleet:
         is_sel = t['id'] == selected_id
-        color = "#00FFFF" if is_sel else ("red" if t['temp'] > 5 or t['temp'] < -10 else "green")
+        is_alert = t['temp'] > 5 or t['temp'] < -10
+        color = "#00FFFF" if is_sel else ("red" if is_alert else "green")
         folium.PolyLine(t['path'], color=color, weight=5 if is_sel else 1.5, opacity=0.8 if is_sel else 0.3).add_to(m)
-        folium.Marker(t['pos'], icon=folium.Icon(color="purple" if is_sel else "orange", icon="truck", prefix="fa")).add_to(m)
+        folium.Marker(t['pos'], icon=folium.Icon(color="purple" if is_sel else ("red" if is_alert else "green"), icon="truck", prefix="fa")).add_to(m)
     
     st_folium(m, width="100%", height=550, key="main_map")
 
-    # Systematic Intel
+    # SYSTEMATIC INTELLIGENCE DASHBOARD
     st.markdown(f"### 📊 Systematic Intelligence: {selected_id}")
-    col1, col2, col3, col4 = st.columns(4)
+    
+    # CALCULATE NEAREST HUB
     n_hub = min(WAREHOUSE_NETWORK, key=lambda x: haversine(selected_truck['pos'][0], selected_truck['pos'][1], x['lat'], x['lon']))
     n_dist = round(haversine(selected_truck['pos'][0], selected_truck['pos'][1], n_hub['lat'], n_hub['lon']))
 
+    # NEW STATUS BAR LOGIC
+    is_critical = selected_truck['temp'] > 5 or selected_truck['temp'] < -10
+    
+    if is_critical:
+        st.error(f"🛑 **MISSION STATUS: REROUTE TO NEAREST HUB IMMEDIATELY** | Cargo Temp ({selected_truck['temp']}°C) is outside safety limits. Head to: **{n_hub['name']}**")
+    else:
+        st.success(f"✅ **MISSION STATUS: CONTINUE / SAFE** | Cargo internal environment is stable at {selected_truck['temp']}°C.")
+
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Driver Profile", selected_truck['driver'])
-    col1.metric("Current Temp", f"{selected_truck['temp']}°C", delta="RISK" if selected_truck['temp'] > 5 else "STABLE")
+    col1.metric("Live Temp", f"{selected_truck['temp']}°C", delta="CRITICAL" if is_critical else "STABLE", delta_color="inverse")
     col2.metric("Distance Covered", f"{selected_truck['dist_covered']} km")
     col2.metric("Distance Remaining", f"{selected_truck['dist_rem']} km")
-    col3.metric("Drive Time", f"{selected_truck['hrs_driven']} hrs")
-    col3.metric("Path", f"{selected_truck['origin'][:8]} ➔ {selected_truck['dest'][:8]}")
-    col4.info(f"📍 **Nearest Rescue:** {n_hub['name']}\n\n**Deviation:** {n_dist} km")
+    col3.metric("Current Driving Time", f"{selected_truck['hrs_driven']} hrs")
+    col3.metric("Full Path", f"{selected_truck['origin'][:8]} ➔ {selected_truck['dest'][:8]}")
+    col4.info(f"📍 **Nearest Rescue Node:** {n_hub['name']}\n\n**Deviation Distance:** {n_dist} km")
 
 with tab2:
     st.subheader("Sub-Zero Thermal Forecasts (-10°C to 5°C)")
     f_cols = st.columns(3)
     for i, t in enumerate(st.session_state.fleet):
         with f_cols[i % 3]:
-            st.write(f"**Truck {t['id']}**")
+            st.write(f"**Truck {t['id']}** ({'🚨 ALERT' if (t['temp'] > 5 or t['temp'] < -10) else '✅ OK'})")
             st.line_chart(t['forecast'], height=150)
 
 with tab3:
     st.header("Strategic Trip Planner")
     c1, c2, c3 = st.columns([1,1,1])
-    s_node = c1.selectbox("Start", list(PHARMA_HUBS.keys()))
-    e_node = c2.selectbox("End", list(DESTINATIONS.keys()))
+    s_node = c1.selectbox("Start Node", list(PHARMA_HUBS.keys()))
+    e_node = c2.selectbox("Destination Node", list(DESTINATIONS.keys()))
     rad = c3.slider("Search Radius (km)", 20, 150, 60)
     
-    if st.button("Plan Safety Audit"):
+    if st.button("Generate Road Safety Audit"):
         p, d = get_road_route(PHARMA_HUBS[s_node], DESTINATIONS[e_node])
         st.success(f"Verified Distance: {d} km")
         pm = folium.Map(location=PHARMA_HUBS[s_node], zoom_start=6, tiles="CartoDB dark_matter")
