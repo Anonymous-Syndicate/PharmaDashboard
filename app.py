@@ -6,12 +6,13 @@ import random
 import requests
 import polyline
 import math
+import time
 from datetime import datetime
 
 # --- CONFIGURATION ---
 st.set_page_config(layout="wide", page_title="PharmaGuard | National Command Center", page_icon="❄️")
 
-# --- CUSTOM CSS FOR LOADING SCREEN ---
+# --- CUSTOM CSS FOR FULL-SCREEN LOADING ---
 st.markdown("""
     <style>
     #loading-overlay {
@@ -22,13 +23,13 @@ st.markdown("""
         justify-content: center; align-items: center;
         z-index: 9999; color: white;
     }
-    .loader { font-size: 120px; animation: pulse 2s infinite; margin-bottom: 25px; }
+    .loader { font-size: 120px; animation: pulse 1.5s infinite; margin-bottom: 25px; }
     @keyframes pulse {
         0% { transform: scale(1); opacity: 0.7; }
-        50% { transform: scale(1.2); opacity: 1; color: #00FFFF; }
+        50% { transform: scale(1.2); opacity: 1; color: #00FFFF; text-shadow: 0 0 20px #00FFFF; }
         100% { transform: scale(1); opacity: 0.7; }
     }
-    .loading-text { font-size: 28px; font-weight: 300; letter-spacing: 4px; }
+    .loading-text { font-size: 24px; font-weight: 300; letter-spacing: 5px; font-family: sans-serif; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -77,19 +78,19 @@ WAREHOUSE_NETWORK = [
 ]
 
 PHARMA_HUBS = {
-    "Baddi Hub (North)": [30.9578, 76.7914], "Sikkim Cluster (East)": [27.3314, 88.6138],
-    "Ahmedabad (West)": [23.0225, 72.5714], "Hyderabad (South)": [17.4500, 78.6000],
-    "Vizag Pharma City": [17.6868, 83.2185], "Goa Manufacturing": [15.2993, 74.1240],
+    "Baddi Hub": [30.9578, 76.7914], "Sikkim Cluster": [27.3314, 88.6138],
+    "Ahmedabad (W)": [23.0225, 72.5714], "Hyderabad (S)": [17.4500, 78.6000],
+    "Vizag City": [17.6868, 83.2185], "Goa Manufacturing": [15.2993, 74.1240],
     "Indore SEZ": [22.7196, 75.8577], "Pune Bio-Cluster": [18.5204, 73.8567]
 }
 
 DESTINATIONS = {
-    "Mumbai Port": [18.9438, 72.8387], "Delhi Air Cargo": [28.5562, 77.1000],
-    "Bangalore Dist.": [12.9716, 77.5946], "Chennai Terminal": [13.0827, 80.2707],
+    "Mumbai Port": [18.9438, 72.8387], "Delhi Cargo": [28.5562, 77.1000],
+    "Bangalore Dist": [12.9716, 77.5946], "Chennai Term": [13.0827, 80.2707],
     "Kolkata Port": [22.5726, 88.3639], "Guwahati Hub": [26.1445, 91.7362]
 }
 
-# --- FUNCTIONS ---
+# --- HELPERS ---
 @st.cache_data(ttl=3600)
 def get_road_route(start, end):
     url = f"http://router.project-osrm.org/route/v1/driving/{start[1]},{start[0]};{end[1]},{end[0]}?overview=full"
@@ -105,52 +106,53 @@ def haversine(lat1, lon1, lat2, lon2):
     return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
 def generate_forecast(is_failing=False):
-    """Generates temperature data with stable zones and minute spikes."""
     data = []
-    base_temp = 8.5 if is_failing else -4.0
-    for i in range(12):
-        # Base stability noise
+    base = 8.8 if is_failing else -4.2
+    for _ in range(12):
         noise = random.uniform(-0.3, 0.3)
-        # Occasional minute spike (15% chance)
-        spike = random.uniform(1.0, 2.5) if random.random() < 0.15 else 0
-        
-        val = base_temp + noise + spike
-        # Limit the fail truck to show the breach clearly
-        if not is_failing:
-            val = max(-9.5, min(4.5, val))
+        spike = random.uniform(1.2, 2.8) if random.random() < 0.12 else 0
+        val = base + noise + spike
+        if not is_failing: val = max(-9.5, min(4.8, val))
         data.append(round(val, 2))
     return data
 
-# --- INITIALIZATION ---
+# --- EVERY-REFRESH LOADING ANIMATION ---
+loading_placeholder = st.empty()
+with loading_placeholder:
+    st.markdown("""
+        <div id="loading-overlay">
+            <div class="loader">❄️</div>
+            <div class="loading-text">PHARMAGUARD AI: ANALYZING NETWORK...</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# Data Initialization Logic
 if 'fleet' not in st.session_state:
-    loading_placeholder = st.empty()
-    with loading_placeholder:
-        st.markdown('<div id="loading-overlay"><div class="loader">❄️</div><div class="loading-text">COMMAND CENTER ONLINE...</div></div>', unsafe_allow_html=True)
-    
     fleet = []
-    hub_keys, dest_keys = list(PHARMA_HUBS.keys()), list(DESTINATIONS.keys())
-    drivers = ["N. Modi", "S. Jaishankar", "K. Rathore", "Mohd. Salim", "Pritam Singh", "R. Deshmukh", "Gurdeep Paaji", "Vijay Mallya", "S. Tharoor", "N. Chandran", "Arjun Kapur", "Deepak Punia", "Suresh Raina", "M. S. Dhoni", "Hardik Pandya"]
-    
+    h_keys, d_keys = list(PHARMA_HUBS.keys()), list(DESTINATIONS.keys())
+    # Adjusted driver names to match screenshot request
+    drivers = ["N. Modi", "A. Shah", "R. Gandhi", "M. Salim", "Pritam Singh", "R. Deshmukh", "Gurdeep Paaji", "Vijay Mallya", "S. Tharoor", "N. Chandran", "Arjun Kapur", "Deepak Punia", "Suresh Raina", "M. S. Dhoni", "Hardik Pandya"]
     for i in range(15):
-        o_key, d_key = hub_keys[i % len(hub_keys)], dest_keys[i % len(dest_keys)]
-        path, dist = get_road_route(PHARMA_HUBS[o_key], DESTINATIONS[d_key])
+        o, d = h_keys[i % len(h_keys)], d_keys[i % len(d_keys)]
+        path, dist = get_road_route(PHARMA_HUBS[o], DESTINATIONS[d])
         prog = random.uniform(0.3, 0.7)
         pos = path[int(len(path)*prog)]
-        
-        is_fail = (i == 5) # IND-EXP-1005
-        forecast_data = generate_forecast(is_failing=is_fail)
-
+        is_fail = (i == 5)
+        f_data = generate_forecast(is_fail)
         fleet.append({
             "id": f"IND-EXP-{1000+i}", "driver": drivers[i % len(drivers)],
-            "origin": o_key, "dest": d_key, "pos": pos, "path": path,
+            "origin": o, "dest": d, "pos": pos, "path": path,
             "total_km": dist, "dist_covered": round(dist * prog), "dist_rem": round(dist * (1-prog)),
-            "hrs_driven": round(prog * 12, 1), "temp": forecast_data[0],
-            "forecast": forecast_data
+            "hrs_driven": round(prog * 12, 1), "temp": f_data[0], "forecast": f_data
         })
     st.session_state.fleet = fleet
-    loading_placeholder.empty()
+else:
+    time.sleep(1.2)
+
+loading_placeholder.empty()
 
 # --- APP LAYOUT ---
+st.title("❄️ PharmaGuard National Command Center")
 tab1, tab2, tab3 = st.tabs(["🌐 Live Map", "🌡️ Thermal Forecasts", "🛤️ Trip Planner"])
 
 with tab1:
@@ -180,27 +182,37 @@ with tab1:
     n_dist = round(haversine(selected_truck['pos'][0], selected_truck['pos'][1], n_hub['lat'], n_hub['lon']))
     is_critical = selected_truck['temp'] > 5 or selected_truck['temp'] < -10
     
+    # STATUS BAR
     if is_critical:
-        st.error(f"🛑 **MISSION STATUS: REROUTE TO NEAREST HUB** | Cargo Breach ({selected_truck['temp']}°C). Proceed to: **{n_hub['name']}**")
+        st.error(f"🛑 **MISSION STATUS: REROUTE TO NEAREST HUB** | Temp Breach ({selected_truck['temp']}°C). Reroute: **{n_hub['name']}**")
     else:
         st.success(f"✅ **MISSION STATUS: CONTINUE / SAFE** | Environment Nominal.")
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Driver", selected_truck['driver'])
-    c1.metric("Live Temp", f"{selected_truck['temp']}°C", delta="CRITICAL" if is_critical else "SAFE", delta_color="inverse")
-    c2.metric("Covered", f"{selected_truck['dist_covered']} km")
-    c2.metric("Remaining", f"{selected_truck['dist_rem']} km")
-    c3.metric("Time", f"{selected_truck['hrs_driven']} hrs")
-    c3.metric("Route", f"{selected_truck['origin'][:8]} ➔ {selected_truck['dest'][:8]}")
-    c4.info(f"📍 **Rescue Target:** {n_hub['name']}\n\n**Dev:** {n_dist} km")
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Driver", selected_truck['driver'])
+    col1.metric("Live Temp", f"{selected_truck['temp']}°C", delta="SAFE" if not is_critical else "FAIL", delta_color="normal")
+    col2.metric("Covered", f"{selected_truck['dist_covered']} km")
+    col2.metric("Remaining", f"{selected_truck['dist_rem']} km")
+    col3.metric("Time", f"{selected_truck['hrs_driven']} hrs")
+    # FIX: REMOVED [:8] SLICING TO SHOW FULL ROUTE NAMES
+    col3.metric("Route", f"{selected_truck['origin']} ➔ {selected_truck['dest']}")
+    
+    with col4:
+        st.markdown(f"""
+        <div style="background-color:#1e2130; padding:12px; border-radius:8px; border-left: 5px solid {'#ff4b4b' if is_critical else '#3498db'};">
+            <p style="margin:0; font-size:0.8rem; color:#9ea0a9; text-transform:uppercase;">📍 Rescue Target</p>
+            <p style="margin:0; font-size:1rem; font-weight:bold; color:#ffffff;">{n_hub['name']}</p>
+            <p style="margin:0; font-size:0.85rem; color:{'#ff4b4b' if is_critical else '#3498db'};">Dev: {n_dist} km</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 with tab2:
-    st.subheader("Simulated Thermal Profile (-10°C to 5°C)")
+    st.subheader("Sub-Zero Thermal Profile (-10°C to 5°C)")
     f_cols = st.columns(3)
     for i, t in enumerate(st.session_state.fleet):
         with f_cols[i % 3]:
             df_chart = pd.DataFrame({
-                "Temperature": t['forecast'],
+                "Temp": t['forecast'],
                 "Upper Limit": [5.0] * len(t['forecast']),
                 "Lower Limit": [-10.0] * len(t['forecast'])
             })
@@ -214,15 +226,4 @@ with tab3:
     end_n = p2.selectbox("Destination", list(DESTINATIONS.keys()))
     radius = p3.slider("Rescue Buffer (km)", 20, 150, 60)
     if st.button("Generate Road Safety Audit"):
-        path, d = get_road_route(PHARMA_HUBS[start_n], DESTINATIONS[end_n])
-        st.success(f"Verified Distance: {d} km")
-        pm = folium.Map(location=PHARMA_HUBS[start_n], zoom_start=6, tiles="CartoDB dark_matter")
-        folium.PolyLine(path, color="#00FFFF", weight=4).add_to(pm)
-        found = []
-        for wh in WAREHOUSE_NETWORK:
-            dist = min([haversine(wh['lat'], wh['lon'], pt[0], pt[1]) for pt in path[::20]])
-            if dist <= radius:
-                folium.Marker([wh['lat'], wh['lon']], icon=folium.Icon(color="orange", icon="shield-heart", prefix="fa"), popup=wh['name']).add_to(pm)
-                found.append({"Hub": wh['name'], "Deviation (km)": round(dist, 1)})
-        st_folium(pm, width="100%", height=450, key="plan_map")
-        if found: st.table(pd.DataFrame(found).sort_values("Deviation (km)"))
+        p
